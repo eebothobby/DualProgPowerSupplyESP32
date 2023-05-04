@@ -42,9 +42,9 @@
 #include <TFT_eSPI.h> // Hardware-specific library
 #include <Encoder.h>
 #include <Bounce2.h>
-#include <Preferences.h>
 #include <DAC7574.h>
 #include <ADS7828.h>
+#include "calib.h"
 
 DAC7574 dac;
 #define DAC7574_I2CADR 0 // A1, A0 pins
@@ -74,18 +74,7 @@ const uint8_t adcvout[2] = {VOUTA, VOUTB};
 
 TFT_eSPI tft = TFT_eSPI();       // Invoke custom library
 
-// Preferences used to store calibration
-Preferences pref;
-// Internal ESP32 ADC calibration, this is stored in preferences
-float espADCfactor = 0.000766; // 3.137/4096.0
-float espADCoffset = 0.1078;
-
-// XXX No calibration for ADS7828 for now
-float adcfactor = 0.00080566; // 3.3/4096.0
-float adcoffset = 0.0;
-
-// XXX No calibrartion for now
-float dacfactor = 0.00080566; // 3.3/4096.0
+Calib calib;
 
 // flag to indicate that the calibration values have been updated in preferences and need to be saved
 bool calibupdate = false; 
@@ -140,45 +129,28 @@ bool clim[2] = {false, false};
 float powOutW[2] = {0.0, 0.0}; // Output power Watts
 float ldoDissW[2] = {0.0, 0.0}; // LDO power dissipation
 
-int disp = 0; // flag to indicate that the display needs to be refreshed
 unsigned long ptimeus = 0;
 
-// get calibration values from pref
-void getCalib() {
-  espADCfactor = pref.getFloat("adcfactor", 0.000766);
-  espADCoffset = pref.getFloat("adcoffset", 0.1078);
-  return;
-}
-
-// set calibration values to pref
-void setCalib() {
-  pref.putFloat("espADCfactor", espADCfactor);
-  pref.putFloat("espADCoffset", espADCoffset);
-  return;
-}
-
-// Convert ADC reading to voltage
-float adcToVolts(uint16_t aval) {
-  return adcoffset + (adcfactor * aval);
-}
-
-// Convert espADC reading to voltage
-float espADCToVolts(uint16_t aval) {
-  return espADCoffset + (espADCfactor * aval);
-}
-
-// Read the ADCs and sum them, calculate the output values
-void readAvolts() {
-  uint8_t chan;
+// Read the clim status for both channels
+// Return: false: no change (no need to update display), true: there has been a change
+bool readClims() {
+  bool disp = false;
   // Only display if clim values change.
   bool prevclim;
-  for (int chan = 0; chan < 2; chan++) {
+  for (uint8_t chan = 0; chan < 2; chan++) {
     prevclim = clim[chan];
     clim[chan] = (digitalRead(climpin[chan]) == 0) ? true: false;
     if (prevclim != clim[chan]) {
-      disp = 1;
+      disp = true;
     }
   }
+  return disp;
+}
+
+// Read the ADCs and sum them, calculate the output values
+// Return false: display need not be updated, true: display should be updated
+bool readAvolts() {
+  bool disp = false;
 
   for (int i = 0; i < 8; i++) {
     adcsum[i] = adcsum[i] + adc.read(i);
@@ -190,30 +162,31 @@ void readAvolts() {
       adcaval[i] = adcsum[i]/countadc;
     }
 
-    for (chan = 0; chan < 2; chan++)
+    for (uint8_t chan = 0; chan < 2; chan++)
     {
       // factor of 10.0 comes from external voltage divider
-      vout[chan] = 10.0 * adcToVolts(adcaval[adcvout[chan]]);
-      vsw[chan] = 10.0 * adcToVolts(adcaval[adcvsw[chan]]);
-      vin = 10.0 * espADCToVolts(adcaval[8]);
+      vout[chan] = 10.0 * calib.ADCToVolts(adcaval[adcvout[chan]]);
+      vsw[chan] = 10.0 * calib.ADCToVolts(adcaval[adcvsw[chan]]);
       // Imon = Iout/5000
       // Old board R = 10K, new board R = 4.7K
       // voltage = Imon * R = Iout/5000 * 4700
       // Iout amps = voltage *4700/5000 = voltage * 0.94
-      iout[chan] = 0.94 * adcToVolts(adcaval[adcimon[chan]]);
+      iout[chan] = 0.94 * calib.ADCToVolts(adcaval[adcimon[chan]]);
       // tempmon current is 1uA/C across 1k res = 1mV/C (old value was 10K resistor)
-      tempC[chan] = 1000.0 * adcToVolts(adcaval[adctmon[chan]]);
+      tempC[chan] = 1000.0 * calib.ADCToVolts(adcaval[adctmon[chan]]);
       // Compute powers
       powOutW[chan] = vout[chan] * iout[chan];
       ldoDissW[chan] = (vsw[chan] - vout[chan]) * iout[chan];
     }
+    vin = 10.0 * calib.espADCToVolts(adcaval[8]);
 
     countadc = 0;
     for(int i = 0; i < 9; i++) {
       adcsum[i] = 0.0;
     }
-    disp = 1;
+    disp = true;
   }
+  return disp;
 }
 
 // Each row of text is 20 pixels apart on Y axis, there are 7 rows (0..6)
@@ -336,8 +309,7 @@ void setup(void)
   but0.interval(5);
   but1.interval(5);
 
-  pref.begin("pref", false);
-  getCalib(); // retrieve calibration values from preferences
+  calib.begin();
 
   for (chan = 0; chan < 2; chan++) {
     dac.setData(vsetval[chan], dacvset[chan]);
@@ -364,11 +336,11 @@ uint16_t incr12(uint16_t cur, int32_t incr) {
 
 void loop(void)
 {
+  bool disp = false; // update display if true
   uint8_t chan;
   unsigned long ctimeus = micros();
   unsigned long deltaus;
   
-  disp = 0;
   // XXX but0 controls both enables together for now
   but0.update();
   if (but0.fell()) {
@@ -376,7 +348,7 @@ void loop(void)
     enable[1] = enable[0];
     digitalWrite(enpin[0], enable[0]? HIGH : LOW);
     digitalWrite(enpin[1], enable[1]? HIGH : LOW);
-    disp = 1;
+    disp = true;
   }
 
   // but1 changes display mode
@@ -388,18 +360,18 @@ void loop(void)
     if (!dmode) {
       smode = 0;
       if (calibupdate) {
-        setCalib();
+        // calib.set();
         calibupdate = false;
       }
     }
-    disp = 1;
+    disp = true;
   }
 
   // enc_but controls smode
   enc_but.update();
   if (enc_but.fell()) {
     smode = (smode + 1) % 4;
-    disp = 1;
+    disp = true;
   }
 
   long newPosition = enc.read() / 4;
@@ -429,18 +401,18 @@ void loop(void)
       chan = smode;
       vsetval[chan] = incr12(vsetval[chan], incr);
       dac.setData(vsetval[chan], dacvset[chan]);
-      vsetout[chan] = vsetval[chan] * dacfactor * 10.0;
+      vsetout[chan] = calib.DACToVolts(vsetval[chan]) * 10.0;
     } else if (smode == 2 || smode == 3) {
       chan = smode - 2;
       isetval[chan] = incr12(isetval[chan], incr);
       dac.setData(isetval[chan], daciset[chan]);
-      // isetout[0] = isetval[0] * dacfactor * 0.5; // old board R on imon = 10K
-      isetout[chan] = isetval[chan] * dacfactor * 0.94; // new board R on imon = 4.7K
+      isetout[chan] = calib.DACToVolts(isetval[chan]) * 0.94; // new board R on imon = 4.7K
     }
-    disp = 1;
+    disp = true;
   }
 
-  readAvolts();
+  disp = readClims()? true : disp;
+  disp = readAvolts()? true : disp;
   if (disp) {
     displayInfo();
   } 
