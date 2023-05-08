@@ -46,6 +46,7 @@
 
 #include "calib.h"
 #include "preset.h"
+#include "wificon.h"
 
 DAC7574 dac;
 #define DAC7574_I2CADR 0  // A1, A0 pins
@@ -77,6 +78,7 @@ TFT_eSPI tft = TFT_eSPI();  // Invoke custom library
 
 Calib calib;
 Preset preset;
+Wificon wificon;
 
 // flag to indicate that the calibration values have been updated in preferences
 // and need to be saved
@@ -84,13 +86,8 @@ bool calibupdate = false;
 
 #define VINADC 33  // 1/10 of the inout voltage on GPIO33
 
-#define COUNTMAX 50
-int countadc = 0;  // Count of number of adc measurements summed
-// 0..7 are on ADS7828, 8 is from esp32 pin33 adc meausurement
-uint32_t adcsum[9] = {0, 0, 0, 0, 0,
-                      0, 0, 0, 0};  // Sum of raw adc measurements
-uint16_t adcaval[9] = {
-    0, 0, 0, 0, 0, 0, 0, 0, 0};  // Average over count of raw adc measurements
+#define COUNTMAX 20  // Max number of loops without a display
+int loopcount = 0;   // Number of loops without a display
 
 // Final calculated outputs
 float vsw[2] = {0.0, 0.0};
@@ -157,50 +154,33 @@ bool readClims() {
     return disp;
 }
 
-// Read the ADCs and sum them, calculate the output values
-// Return false: display need not be updated, true: display should be updated
-bool readAvolts() {
-    bool disp = false;
+// Simple low pass filter returns
+//    alpha*newv + (1 - alpha)*curv
+// which can bre re-written as
+//    curv + alpha * (newv - curv)
+float lowPass(float curv, float newv, float alpha) {
+    return curv + alpha * (newv - curv);
+}
 
-    for (int i = 0; i < 8; i++) {
-        adcsum[i] = adcsum[i] + adc.read(i);
+void readAvolts() {
+    float alpha = 0.1;
+    float newv;
+    for (uint8_t chan = 0; chan < 2; chan++) {
+        newv = 10.0 * calib.ADCToVolts(adc.read(adcvout[chan]), adcvout[chan]);
+        vout[chan] = lowPass(vout[chan], newv, alpha);
+        newv = 10.0 * calib.ADCToVolts(adc.read(adcvsw[chan]), adcvsw[chan]);
+        vsw[chan] = lowPass(vsw[chan], newv, alpha);
+        newv = 0.94 * calib.ADCToVolts(adc.read(adcimon[chan]), adcimon[chan]);
+        iout[chan] = lowPass(iout[chan], newv, alpha);
+        newv =
+            1000.0 * calib.ADCToVolts(adc.read(adctmon[chan]), adctmon[chan]);
+        tempC[chan] = lowPass(tempC[chan], newv, alpha);
+        // Compute powers
+        powOutW[chan] = vout[chan] * iout[chan];
+        ldoDissW[chan] = (vsw[chan] - vout[chan]) * iout[chan];
     }
-    adcsum[8] = adcsum[8] + analogRead(VINADC);
-    countadc++;
-    if (countadc >= COUNTMAX) {
-        for (int i = 0; i < 9; i++) {
-            adcaval[i] = adcsum[i] / countadc;
-        }
-
-        for (uint8_t chan = 0; chan < 2; chan++) {
-            // factor of 10.0 comes from external voltage divider
-            vout[chan] =
-                10.0 * calib.ADCToVolts(adcaval[adcvout[chan]], adcvout[chan]);
-            vsw[chan] =
-                10.0 * calib.ADCToVolts(adcaval[adcvsw[chan]], adcvsw[chan]);
-            // Imon = Iout/5000
-            // Old board R = 10K, new board R = 4.7K
-            // voltage = Imon * R = Iout/5000 * 4700
-            // Iout amps = voltage *4700/5000 = voltage * 0.94
-            iout[chan] =
-                0.94 * calib.ADCToVolts(adcaval[adcimon[chan]], adcimon[chan]);
-            // tempmon current is 1uA/C across 1k res = 1mV/C (old value was 10K
-            // resistor)
-            tempC[chan] = 1000.0 * calib.ADCToVolts(adcaval[adctmon[chan]],
-                                                    adctmon[chan]);
-            // Compute powers
-            powOutW[chan] = vout[chan] * iout[chan];
-            ldoDissW[chan] = (vsw[chan] - vout[chan]) * iout[chan];
-        }
-        vin = 10.0 * calib.espADCToVolts(adcaval[8]);
-
-        countadc = 0;
-        for (int i = 0; i < 9; i++) {
-            adcsum[i] = 0.0;
-        }
-        disp = true;
-    }
-    return disp;
+    newv = 10.0 * calib.espADCToVolts(analogRead(VINADC));
+    vin = lowPass(vin, newv, alpha);
 }
 
 // Each row of text is 20 pixels apart on Y axis, there are 7 rows (0..6)
@@ -379,6 +359,7 @@ void setup(void) {
 
     calib.begin();
     preset.begin();
+    wificon.begin();
 
     for (chan = 0; chan < 2; chan++) {
         dac.setData(vsetval[chan], dacvset[chan]);
@@ -433,6 +414,63 @@ void loop(void) {
     uint8_t chan;
     unsigned long ctimeus = micros();
     unsigned long deltaus;
+    char inbyte = 0;
+    String ssid, pass;
+
+    // r: print raw ADC values
+    if (Serial.available() > 0) {
+        inbyte = Serial.read();
+        switch (inbyte) {
+            case 'r':
+                for (uint8_t chan = 0; chan < 8; chan++) {
+                    Serial.print(adc.read(chan));
+                    Serial.print(' ');
+                }
+                Serial.println(analogRead(VINADC));
+                break;
+            case 's':
+                Serial.print("ssid: ");
+                Serial.println(wificon.getSSID());
+                break;
+            case 'S':
+                ssid = Serial.readString();
+                ssid.trim();
+                wificon.setSSID(ssid);
+                break;
+            case 'p':
+                Serial.print("pass: ");
+                Serial.println(wificon.getPass());
+                break;
+            case 'P':
+                pass = Serial.readString();
+                pass.trim();
+                wificon.setPass(pass);
+                break;
+            case 'e':
+                Serial.print("wfen: "); Serial.println(wificon.wfen);
+                break;
+            case 'E':
+                wificon.wfen = !wificon.wfen;
+                wificon.setWfen();
+                break;
+            default:
+                if (inbyte == '\n' || inbyte == '\r') {
+                } else {
+                    Serial.print("Unknown: ");
+                    Serial.println(inbyte);
+                }
+        }
+    }
+
+    if (wificon.wfen) {
+      if (!wificon.connect()) {
+        Serial.println("Connection failed");
+      }
+    } else {
+      if (!wificon.disconnect()) {
+        Serial.println("Disocnnection failed");
+      }
+    }
 
     // XXX but0 controls both enables together for now
     but0.update();
@@ -447,8 +485,8 @@ void loop(void) {
     // but1 changes display mode
     but1.update();
     if (but1.fell()) {
-        dmode = (dmode + 1) % 3;  // Toggles dmode between 0 and 1
-        // If we came out of debug mode check if we need to save calibration
+        dmode = (dmode + 1) % 3;  // Cycles dmode through 0, 1, 2
+        // XXX If we came out of debug mode check if we need to save calibration
         // and reset smode to 0
         if (!dmode) {
             smode = 0;
@@ -520,8 +558,13 @@ void loop(void) {
     }
 
     disp = readClims() ? true : disp;
-    disp = readAvolts() ? true : disp;
+    readAvolts();
+    loopcount++;
+    if (loopcount >= COUNTMAX) {
+        disp = true;
+    }
     if (disp) {
+        loopcount = 0;
         displayInfo();
     }
 }
