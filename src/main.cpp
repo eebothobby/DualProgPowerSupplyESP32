@@ -418,6 +418,12 @@ void loop(void) {
     String ssid, pass;
 
     // r: print raw ADC values
+    // s: print ssid
+    // S <ssid> : set ssid
+    // p: print pass
+    // P <pass> : set pass
+    // e: print wfen
+    // E: toggle wfen
     if (Serial.available() > 0) {
         inbyte = Serial.read();
         switch (inbyte) {
@@ -436,6 +442,7 @@ void loop(void) {
                 ssid = Serial.readString();
                 ssid.trim();
                 wificon.setSSID(ssid);
+                Serial.print("ssid saved: "); Serial.println(ssid);
                 break;
             case 'p':
                 Serial.print("pass: ");
@@ -445,6 +452,7 @@ void loop(void) {
                 pass = Serial.readString();
                 pass.trim();
                 wificon.setPass(pass);
+                Serial.print("pass saved: "); Serial.println(pass);
                 break;
             case 'e':
                 Serial.print("wfen: "); Serial.println(wificon.wfen);

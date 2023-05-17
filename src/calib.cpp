@@ -10,8 +10,8 @@ void Calib::begin() {
 }
 
 void Calib::get() {
-    _espADCfactor = _pref.getFloat("espADCf", 0.000766);  // 3.137/4096.0
-    _espADCoffset = _pref.getFloat("espADCo", 0.1078);
+    _espADCfactor = _pref.getFloat("espADCf", 0.000825);
+    _espADCoffset = _pref.getFloat("espADCo", 0.137);
 
     for (int i = 0; i < 8; i++) {
         char buf[8];
