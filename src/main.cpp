@@ -254,8 +254,8 @@ void displayMode1() {
     char buf[22];
     int line = 0;
     for (uint8_t chan = 0; chan < 2; chan++) {
-        pvsetout[chan] = calib.DACToVolts(preset.pvsetval[chan]) * 10.0;
-        pisetout[chan] = calib.DACToVolts(preset.pisetval[chan]) * 0.94;
+        pvsetout[chan] = calib.DACToVolts(preset.pvsetval[chan], dacvset[chan]) * 10.0;
+        pisetout[chan] = calib.DACToVolts(preset.pisetval[chan], daciset[chan]) * 0.94;
     }
     tft.setTextColor(TFT_WHITE);
     tft.drawString("Preset", 0, line * 20);
@@ -394,9 +394,9 @@ void presetAction() {
             vsetval[chan] = preset.pvsetval[chan];
             isetval[chan] = preset.pisetval[chan];
             dac.setData(vsetval[chan], dacvset[chan]);
-            vsetout[chan] = calib.DACToVolts(vsetval[chan]) * 10.0;
+            vsetout[chan] = calib.DACToVolts(vsetval[chan], dacvset[chan]) * 10.0;
             dac.setData(isetval[chan], daciset[chan]);
-            isetout[chan] = calib.DACToVolts(isetval[chan]) *
+            isetout[chan] = calib.DACToVolts(isetval[chan], daciset[chan]) *
                             0.94;  // new board R on imon = 4.7K
         }
     } else if (pract == 2) {
@@ -416,14 +416,17 @@ void loop(void) {
     unsigned long deltaus;
     char inbyte = 0;
     String ssid, pass;
+    float factor, offset;
 
     // r: print raw ADC values
     // s: print ssid
     // S <ssid> : set ssid
     // p: print pass
     // P <pass> : set pass
-    // e: print wfen
-    // E: toggle wfen
+    // w: print wfen
+    // W: toggle wfen
+    // E <fact> <off>: set ESP ADC calibration (<fact>, <off>)
+    // A <chan> <fact>  : set ADC channel <chan> calibration <fact>
     if (Serial.available() > 0) {
         inbyte = Serial.read();
         switch (inbyte) {
@@ -454,12 +457,35 @@ void loop(void) {
                 wificon.setPass(pass);
                 Serial.print("pass saved: "); Serial.println(pass);
                 break;
-            case 'e':
+            case 'w':
                 Serial.print("wfen: "); Serial.println(wificon.wfen);
                 break;
-            case 'E':
+            case 'W':
                 wificon.wfen = !wificon.wfen;
                 wificon.setWfen();
+                break;
+            case 'E':
+                factor = Serial.parseFloat();
+                offset = Serial.parseFloat();
+                calib.setESP(factor, offset);
+                break;
+            case 'A':
+                chan = Serial.parseInt();
+                factor = Serial.parseFloat();
+                if (chan < 0 || chan > 7) {
+                    Serial.print("Illegal channel: "); Serial.println(chan);
+                    break;
+                }
+                calib.setADCf(factor, chan);
+                break;
+            case 'D':
+                chan = Serial.parseInt();
+                factor = Serial.parseFloat();
+                if (chan < 0 || chan > 3) {
+                    Serial.print("Illegal channel: "); Serial.println(chan);
+                    break;
+                }
+                calib.setDACf(factor, chan);
                 break;
             default:
                 if (inbyte == '\n' || inbyte == '\r') {
@@ -550,12 +576,12 @@ void loop(void) {
                 chan = smode;
                 vsetval[chan] = incr12(vsetval[chan], incr);
                 dac.setData(vsetval[chan], dacvset[chan]);
-                vsetout[chan] = calib.DACToVolts(vsetval[chan]) * 10.0;
+                vsetout[chan] = calib.DACToVolts(vsetval[chan], dacvset[chan]) * 10.0;
             } else if (smode == 2 || smode == 3) {
                 chan = smode - 2;
                 isetval[chan] = incr12(isetval[chan], incr);
                 dac.setData(isetval[chan], daciset[chan]);
-                isetout[chan] = calib.DACToVolts(isetval[chan]) *
+                isetout[chan] = calib.DACToVolts(isetval[chan], daciset[chan]) *
                                 0.94;  // new board R on imon = 4.7K
             }
         } else if (dmode == 1) {

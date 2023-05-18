@@ -21,8 +21,12 @@ void Calib::get() {
 
     // Not sure we need an offset
     _ADCoffset = 0.0;
-    // XXX No calibrartion for the DAC for now
-    _DACfactor = 0.00080566;  // 3.3/4096.0
+
+    for (int i = 0; i < 4; i++) {
+        char buf[8];
+        sprintf(buf, "DACf_%d", i);
+        _DACfactor[i] = _pref.getFloat(buf, 0.00080566);  // 3.3/4096.0
+    }
     return;
 }
 
@@ -36,6 +40,9 @@ void Calib::setESP(float espADCfactor, float espADCoffset) {
 
 void Calib::setADCf(float ADCfactor, uint8_t ch) {
     char buf[8];
+    if (ch < 0 || ch > 7) {
+        return;
+    }
     sprintf(buf, "ADCf_%d", ch);
     _ADCfactor[ch] = ADCfactor;
 
@@ -43,13 +50,28 @@ void Calib::setADCf(float ADCfactor, uint8_t ch) {
     return;
 }
 
+void Calib::setDACf(float DACfactor, uint8_t ch) {
+    char buf[8];
+    if (ch < 0 || ch > 3) {
+        return;
+    }
+    sprintf(buf, "DACf_%d", ch);
+    _DACfactor[ch] = DACfactor;
+
+    _pref.putFloat(buf, DACfactor);
+    return;
+}
+
 float Calib::espADCToVolts(uint16_t aval) {
     return _espADCoffset + (_espADCfactor * aval);
 }
 
-// Convert ADC reading to voltage
+// Convert ADC reading to volts
 float Calib::ADCToVolts(uint16_t aval, uint8_t ch) {
     return _ADCoffset + (_ADCfactor[ch] * aval);
 }
 
-float Calib::DACToVolts(uint16_t aval) { return aval * _DACfactor; }
+// Convert DAC reading to volts
+float Calib::DACToVolts(uint16_t aval, uint8_t ch) { 
+    return aval * _DACfactor[ch]; 
+ }
