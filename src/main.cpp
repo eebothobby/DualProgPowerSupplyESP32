@@ -358,7 +358,7 @@ void loop(void) {
     String ssid, pass;
     float factor, offset;
 
-    // r: print raw ADC values
+    // r: print raw ADC and DAC values
     // s: print ssid
     // S <ssid> : set ssid
     // p: print pass
@@ -375,7 +375,7 @@ void loop(void) {
         switch (inbyte) {
             case '?':
             Serial.println("commands: ");
-            Serial.println("r: print raw adc values");
+            Serial.println("r: print raw adc and dac values");
             Serial.println("s: print ssid");
             Serial.println("S <ssid>: set ssid");
             Serial.println("p: print pass");
@@ -397,6 +397,12 @@ void loop(void) {
                     Serial.print(calib.rawTempC(chan)); Serial.print(' ');
                 }
                 Serial.println(calib.rawVin());
+                for (uint8_t chan = 0; chan < 2; chan++) {
+                    Serial.print(chan); Serial.print(": Vset ");
+                    Serial.print(calib.rawVdac(chan)); Serial.print(" Iset ");
+                    Serial.print(calib.rawIdac(chan)); Serial.print(' ');
+                }
+                Serial.println(' ');
                 break;
             case 's':
                 Serial.print("ssid: ");
