@@ -37,42 +37,15 @@
    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#include <ADS7828.h>
+
 #include <Arduino.h>
 #include <Bounce2.h>
-#include <DAC7574.h>
 #include <Encoder.h>
 #include <TFT_eSPI.h>  // Hardware-specific library
 
 #include "calib.h"
 #include "preset.h"
 #include "wificon.h"
-
-DAC7574 dac;
-#define DAC7574_I2CADR 0  // A1, A0 pins
-// DAC channels
-#define VSETB 0
-#define ISETB 1
-#define ISETA 2
-#define VSETA 3
-const uint8_t dacvset[2] = {VSETA, VSETB};
-const uint8_t daciset[2] = {ISETA, ISETB};
-
-ADS7828 adc;
-#define ADS7828_I2CADR 3  // A1, A0 pins
-// ADC channels
-#define IMONB 0
-#define TMONB 1
-#define VSWB 2
-#define VOUTB 3
-#define VOUTA 4
-#define VSWA 5
-#define IMONA 6
-#define TMONA 7
-const uint8_t adcimon[2] = {IMONA, IMONB};
-const uint8_t adctmon[2] = {TMONA, TMONB};
-const uint8_t adcvsw[2] = {VSWA, VSWB};
-const uint8_t adcvout[2] = {VOUTA, VOUTB};
 
 TFT_eSPI tft = TFT_eSPI();  // Invoke custom library
 
@@ -84,8 +57,6 @@ Wificon wificon;
 // and need to be saved
 bool calibupdate = false;
 
-#define VINADC 33  // 1/10 of the inout voltage on GPIO33
-
 #define COUNTMAX 20  // Max number of loops without a display
 int loopcount = 0;   // Number of loops without a display
 
@@ -95,10 +66,6 @@ float vout[2] = {0.0, 0.0};
 float iout[2] = {0.0, 0.0};
 float tempC[2] = {0.0, 0.0};  // Temperature in deg C
 float vin = 0.0;
-
-// DAC values
-uint16_t vsetval[2] = {0, 0};
-uint16_t isetval[2] = {0, 0};
 
 // Corresponding calculated setting values
 float vsetout[2] = {0.0, 0.0};
@@ -164,23 +131,16 @@ float lowPass(float curv, float newv, float alpha) {
 
 void readAvolts() {
     float alpha = 0.1;
-    float newv;
     for (uint8_t chan = 0; chan < 2; chan++) {
-        newv = 10.0 * calib.ADCToVolts(adc.read(adcvout[chan]), adcvout[chan]);
-        vout[chan] = lowPass(vout[chan], newv, alpha);
-        newv = 10.0 * calib.ADCToVolts(adc.read(adcvsw[chan]), adcvsw[chan]);
-        vsw[chan] = lowPass(vsw[chan], newv, alpha);
-        newv = 0.94 * calib.ADCToVolts(adc.read(adcimon[chan]), adcimon[chan]);
-        iout[chan] = lowPass(iout[chan], newv, alpha);
-        newv =
-            1000.0 * calib.ADCToVolts(adc.read(adctmon[chan]), adctmon[chan]);
-        tempC[chan] = lowPass(tempC[chan], newv, alpha);
+        vout[chan] = lowPass(vout[chan], calib.readVout(chan), alpha);
+        vsw[chan] = lowPass(vsw[chan], calib.readVsw(chan), alpha);
+        iout[chan] = lowPass(iout[chan], calib.readIout(chan), alpha);
+        tempC[chan] = lowPass(tempC[chan], calib.readTempC(chan), alpha);
         // Compute powers
         powOutW[chan] = vout[chan] * iout[chan];
         ldoDissW[chan] = (vsw[chan] - vout[chan]) * iout[chan];
     }
-    newv = 10.0 * calib.espADCToVolts(analogRead(VINADC));
-    vin = lowPass(vin, newv, alpha);
+    vin = lowPass(vin, calib.readVin(), alpha);
 }
 
 // Each row of text is 20 pixels apart on Y axis, there are 7 rows (0..6)
@@ -254,8 +214,10 @@ void displayMode1() {
     char buf[22];
     int line = 0;
     for (uint8_t chan = 0; chan < 2; chan++) {
-        pvsetout[chan] = calib.DACToVolts(preset.pvsetval[chan], dacvset[chan]) * 10.0;
-        pisetout[chan] = calib.DACToVolts(preset.pisetval[chan], daciset[chan]) * 0.94;
+        pvsetout[chan] =
+            calib.getVdac(chan, preset.pvsetval[chan]);
+        pisetout[chan] =
+            calib.getIdac(chan, preset.pisetval[chan]);
     }
     tft.setTextColor(TFT_WHITE);
     tft.drawString("Preset", 0, line * 20);
@@ -336,8 +298,8 @@ void setup(void) {
 
     Wire.begin();
     Wire.setClock(400000L);
-    dac.begin(DAC7574_I2CADR);
-    adc.begin(ADS7828_I2CADR);
+    calib.begin();
+    preset.begin();
 
     tft.init();
     tft.setRotation(1);
@@ -357,31 +319,14 @@ void setup(void) {
     but0.interval(5);
     but1.interval(5);
 
-    calib.begin();
-    preset.begin();
     wificon.begin();
 
     for (chan = 0; chan < 2; chan++) {
-        dac.setData(vsetval[chan], dacvset[chan]);
-        dac.setData(isetval[chan], daciset[chan]);
         digitalWrite(enpin[chan], enable[chan] ? HIGH : LOW);
     }
 
     displayInfo();
     ptimeus = micros();
-}
-
-// Return new value for 12-bit cur incremented by incr
-// Limit the return value to 0..4095 (2^12 - 1)
-uint16_t incr12(uint16_t cur, int32_t incr) {
-    uint16_t rval = cur + incr;
-    if (incr > 0 && rval > 4095) {
-        return 4095;
-    } else if (incr < 0 && rval > cur) {
-        // wrapped
-        return 0;
-    }
-    return rval;
 }
 
 // perform the action selected in the Preset mode
@@ -391,19 +336,14 @@ void presetAction() {
     } else if (pract == 1) {
         Serial.println("pract: Use");
         for (uint8_t chan = 0; chan < 2; chan++) {
-            vsetval[chan] = preset.pvsetval[chan];
-            isetval[chan] = preset.pisetval[chan];
-            dac.setData(vsetval[chan], dacvset[chan]);
-            vsetout[chan] = calib.DACToVolts(vsetval[chan], dacvset[chan]) * 10.0;
-            dac.setData(isetval[chan], daciset[chan]);
-            isetout[chan] = calib.DACToVolts(isetval[chan], daciset[chan]) *
-                            0.94;  // new board R on imon = 4.7K
+            vsetout[chan] = calib.setVdac(chan, preset.pvsetval[chan], false);
+            isetout[chan] = calib.setIdac(chan, preset.pisetval[chan], false);
         }
     } else if (pract == 2) {
         Serial.println("pract: Save");
         for (uint8_t chan = 0; chan < 2; chan++) {
-            preset.pvsetval[chan] = vsetval[chan];
-            preset.pisetval[chan] = isetval[chan];
+            preset.pvsetval[chan] = calib.rawVdac(chan);
+            preset.pisetval[chan] = calib.rawIdac(chan);
             preset.save();
         }
     }
@@ -411,7 +351,7 @@ void presetAction() {
 
 void loop(void) {
     bool disp = false;  // update display if true
-    uint8_t chan;
+    uint8_t chan, port;
     unsigned long ctimeus = micros();
     unsigned long deltaus;
     char inbyte = 0;
@@ -426,16 +366,37 @@ void loop(void) {
     // w: print wfen
     // W: toggle wfen
     // E <fact> <off>: set ESP ADC calibration (<fact>, <off>)
-    // A <chan> <fact>  : set ADC channel <chan> calibration <fact>
+    // A <chan> <port> <fact> <off> : set ADC channel <chan> <port> calibration <fact> <off>
+    //      where <port> is 0: Vout, 1: Vsw, 2: Iout, 3: TempC
+    // D <chan> <port> <fact> <off> : set DAC channel <chan> <port> calibration <fact> <off>
+    //      where <port> is 0: V, 1: I
     if (Serial.available() > 0) {
         inbyte = Serial.read();
         switch (inbyte) {
+            case '?':
+            Serial.println("commands: ");
+            Serial.println("r: print raw adc values");
+            Serial.println("s: print ssid");
+            Serial.println("S <ssid>: set ssid");
+            Serial.println("p: print pass");
+            Serial.println("P <pass>: set pass");
+            Serial.println("w: print wfen");
+            Serial.println("W: toggle wfen");
+            Serial.println("E <fact> <off>: set Vin ADC calib");
+            Serial.println("A <chan> <port> <fact> <off>: set ADC calib for <chan> <port>");
+            Serial.println("  <chan> = 0..1, <port> = 0: Vout 1: Vsw 2: Iout 3: TempC");
+            Serial.println("D <chan> <port> <fact> <off>");
+            Serial.println("  <chan> = 0..1 <port> = 0: V, 1: I");
+            break;
             case 'r':
-                for (uint8_t chan = 0; chan < 8; chan++) {
-                    Serial.print(adc.read(chan));
-                    Serial.print(' ');
+                for (uint8_t chan = 0; chan < 2; chan++) {
+                    Serial.print(chan); Serial.print(": Vout ");
+                    Serial.print(calib.rawVout(chan)); Serial.print(" Vsw ");
+                    Serial.print(calib.rawVsw(chan)); Serial.print(" Iout ");
+                    Serial.print(calib.rawIout(chan)); Serial.print(" TempC ");
+                    Serial.print(calib.rawTempC(chan)); Serial.print(' ');
                 }
-                Serial.println(analogRead(VINADC));
+                Serial.println(calib.rawVin());
                 break;
             case 's':
                 Serial.print("ssid: ");
@@ -445,7 +406,8 @@ void loop(void) {
                 ssid = Serial.readString();
                 ssid.trim();
                 wificon.setSSID(ssid);
-                Serial.print("ssid saved: "); Serial.println(ssid);
+                Serial.print("ssid saved: ");
+                Serial.println(ssid);
                 break;
             case 'p':
                 Serial.print("pass: ");
@@ -455,10 +417,12 @@ void loop(void) {
                 pass = Serial.readString();
                 pass.trim();
                 wificon.setPass(pass);
-                Serial.print("pass saved: "); Serial.println(pass);
+                Serial.print("pass saved: ");
+                Serial.println(pass);
                 break;
             case 'w':
-                Serial.print("wfen: "); Serial.println(wificon.wfen);
+                Serial.print("wfen: ");
+                Serial.println(wificon.wfen);
                 break;
             case 'W':
                 wificon.wfen = !wificon.wfen;
@@ -467,25 +431,57 @@ void loop(void) {
             case 'E':
                 factor = Serial.parseFloat();
                 offset = Serial.parseFloat();
-                calib.setESP(factor, offset);
+                calib.adcCalibVin(factor, offset);
                 break;
             case 'A':
                 chan = Serial.parseInt();
+                port = Serial.parseInt();
                 factor = Serial.parseFloat();
-                if (chan < 0 || chan > 7) {
-                    Serial.print("Illegal channel: "); Serial.println(chan);
+                offset = Serial.parseFloat();
+                if (chan < 0 || chan > 1) {
+                    Serial.print("Illegal channel: ");
+                    Serial.println(chan);
                     break;
                 }
-                calib.setADCf(factor, chan);
+                switch (port) {
+                    case 0:
+                    calib.adcCalibVout(chan, factor, offset);
+                    break;
+                    case 1:
+                    calib.adcCalibVsw(chan, factor, offset);
+                    break;
+                    case 2:
+                    calib.adcCalibIout(chan, factor, offset);
+                    break;
+                    case 3:
+                    calib.adcCalibTempC(chan, factor, offset);
+                    break;
+                    default:
+                    Serial.print("Illegal port: ");
+                    Serial.println(port);
+                }
                 break;
             case 'D':
                 chan = Serial.parseInt();
+                port = Serial.parseInt();
                 factor = Serial.parseFloat();
-                if (chan < 0 || chan > 3) {
-                    Serial.print("Illegal channel: "); Serial.println(chan);
+                offset = Serial.parseFloat();
+                if (chan < 0 || chan > 1) {
+                    Serial.print("Illegal channel: ");
+                    Serial.println(chan);
                     break;
                 }
-                calib.setDACf(factor, chan);
+                switch (port) {
+                    case 0:
+                    calib.dacCalibV(chan, factor, offset);
+                    break;
+                    case 1:
+                    calib.dacCalibI(chan, factor, offset);
+                    break;
+                    default:
+                    Serial.print("Illegal port: ");
+                    Serial.println(port);
+                }
                 break;
             default:
                 if (inbyte == '\n' || inbyte == '\r') {
@@ -497,13 +493,13 @@ void loop(void) {
     }
 
     if (wificon.wfen) {
-      if (!wificon.connect()) {
-        Serial.println("Connection failed");
-      }
+        if (!wificon.connect()) {
+            Serial.println("Connection failed");
+        }
     } else {
-      if (!wificon.disconnect()) {
-        Serial.println("Disocnnection failed");
-      }
+        if (!wificon.disconnect()) {
+            Serial.println("Disocnnection failed");
+        }
     }
 
     // XXX but0 controls both enables together for now
@@ -574,15 +570,10 @@ void loop(void) {
             // Normal mode, change the voltage or current limit settings
             if (smode == 0 || smode == 1) {
                 chan = smode;
-                vsetval[chan] = incr12(vsetval[chan], incr);
-                dac.setData(vsetval[chan], dacvset[chan]);
-                vsetout[chan] = calib.DACToVolts(vsetval[chan], dacvset[chan]) * 10.0;
+                vsetout[chan] = calib.setVdac(chan, incr, true);
             } else if (smode == 2 || smode == 3) {
                 chan = smode - 2;
-                isetval[chan] = incr12(isetval[chan], incr);
-                dac.setData(isetval[chan], daciset[chan]);
-                isetout[chan] = calib.DACToVolts(isetval[chan], daciset[chan]) *
-                                0.94;  // new board R on imon = 4.7K
+                isetout[chan] = calib.setIdac(chan, incr, true);
             }
         } else if (dmode == 1) {
             // Preset mode, change preset action

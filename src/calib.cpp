@@ -6,72 +6,295 @@ Calib::Calib() {}
 void Calib::begin() {
     _pref.begin("calib", false);
     // _pref.clear();
-    get();
+    _dac.begin(DAC7574_I2CADR);
+    _adc.begin(ADS7828_I2CADR);
+    _load();
+    // Set the DAC values to 0
+    for (uint8_t chan = 0; chan < 2; chan++) {
+        setVdac(chan, 0, false);
+        setIdac(chan, 0, false);
+    }
 }
 
-void Calib::get() {
-    _espADCfactor = _pref.getFloat("espADCf", 0.000825);
-    _espADCoffset = _pref.getFloat("espADCo", 0.137);
+void Calib::_load() {
+    float defFact[8], defOff[8]; // default values for factor and offset
 
-    for (int i = 0; i < 8; i++) {
-        char buf[8];
-        sprintf(buf, "ADCf_%d", i);
-        _ADCfactor[i] = _pref.getFloat(buf, 0.00080566);  // 3.3/4096.0
+    // Load the ESP calibration values, default values empirically determined
+    _espADCfactor = _pref.getFloat("espADCf", 0.00825);
+    _espADCoffset = _pref.getFloat("espADCo", 1.37);
+
+    // calculate the default values for ADC calibs
+    for (uint8_t ch = 0; ch < 2; ch++) {
+        defFact[_adcvout[ch]] = 0.0080566; // 10 * 3.3 / 4096.0
+        defOff[_adcvout[ch]] = 0.0;
+        defFact[_adcvsw[ch]] = 0.0080566; // 10 * 3.3 / 4096.0
+        defOff[_adcvsw[ch]] = 0.0;
+        defFact[_adcimon[ch]] = 0.000757; // 0.94 * 3.3/4096.0
+        defOff[_adcimon[ch]] = 0.0;
+        defFact[_adctmon[ch]] = 0.80566; // 1000 * 3.3/4096.0
+        defOff[_adctmon[ch]] = 0.0;
     }
 
-    // Not sure we need an offset
-    _ADCoffset = 0.0;
+    // Load ADC calibration
+    for (uint8_t i = 0; i < 8; i++) {
+        char buf[8];
+        sprintf(buf, "ADCf_%d", i);
+        _ADCfactor[i] = _pref.getFloat(buf, defFact[i]);
+        sprintf(buf, "ADCo_%d", i);
+        _ADCoffset[i] = _pref.getFloat(buf, defOff[i]);
+    }
 
-    for (int i = 0; i < 4; i++) {
+    // calculate the default values for DAC calibs
+    for (uint8_t ch = 0; ch < 2; ch++) {
+        defFact[_dacvset[ch]] = 0.0080566; // 10 * 3.3 / 4096.0
+        defOff[_dacvset[ch]] = 0.0;
+        defFact[_daciset[ch]] = 0.000757; // 0.94 * 3.3/4096.0
+        defOff[_daciset[ch]] = 0.0;
+    }
+
+    // load the DAC calibration
+    for (uint8_t i = 0; i < 4; i++) {
         char buf[8];
         sprintf(buf, "DACf_%d", i);
-        _DACfactor[i] = _pref.getFloat(buf, 0.00080566);  // 3.3/4096.0
+        _DACfactor[i] = _pref.getFloat(buf, defFact[i]);
+        _DACoffset[i] = _pref.getFloat(buf, defOff[i]);
     }
     return;
 }
 
-void Calib::setESP(float espADCfactor, float espADCoffset) {
-    _espADCfactor = espADCfactor;
-    _espADCoffset = espADCoffset;
+void Calib::adcCalibVin(float factor, float offset) {
+    _espADCfactor = factor;
+    _espADCoffset = offset;
     _pref.putFloat("espADCf", _espADCfactor);
     _pref.putFloat("espADCo", _espADCoffset);
     return;
 }
 
-void Calib::setADCf(float ADCfactor, uint8_t ch) {
+// Common code for 8-port ADC calibratrion
+// chan = 0..7
+void Calib::_adcCalib(uint8_t ch, float factor, float offset) {
     char buf[8];
-    if (ch < 0 || ch > 7) {
+    if (ch > 7) {
         return;
     }
+    _ADCfactor[ch] = factor;
+    _ADCoffset[ch] = offset;
+    
     sprintf(buf, "ADCf_%d", ch);
-    _ADCfactor[ch] = ADCfactor;
-
-    _pref.putFloat(buf, ADCfactor);
+    _pref.putFloat(buf, factor);
+    sprintf(buf, "ADCo_%d", ch);
+    _pref.putFloat(buf, offset);
     return;
 }
 
-void Calib::setDACf(float DACfactor, uint8_t ch) {
-    char buf[8];
-    if (ch < 0 || ch > 3) {
+void Calib::adcCalibVsw(uint8_t chan, float factor, float offset) {
+    if (chan > 1) {
         return;
     }
-    sprintf(buf, "DACf_%d", ch);
-    _DACfactor[ch] = DACfactor;
-
-    _pref.putFloat(buf, DACfactor);
+    _adcCalib(_adcvsw[chan], factor, offset);
     return;
 }
 
-float Calib::espADCToVolts(uint16_t aval) {
-    return _espADCoffset + (_espADCfactor * aval);
+void Calib::adcCalibVout(uint8_t chan, float factor, float offset) {
+    if (chan > 1) {
+        return;
+    }
+    _adcCalib(_adcvout[chan], factor, offset);
+    return;
 }
 
-// Convert ADC reading to volts
-float Calib::ADCToVolts(uint16_t aval, uint8_t ch) {
-    return _ADCoffset + (_ADCfactor[ch] * aval);
+void Calib::adcCalibIout(uint8_t chan, float factor, float offset) {
+    if (chan > 1) {
+        return;
+    }
+    _adcCalib(_adcimon[chan], factor, offset);
+    return;
 }
 
-// Convert DAC reading to volts
-float Calib::DACToVolts(uint16_t aval, uint8_t ch) { 
-    return aval * _DACfactor[ch]; 
- }
+void Calib::adcCalibTempC(uint8_t chan, float factor, float offset) {
+    if (chan > 1) {
+        return;
+    }
+    _adcCalib(_adctmon[chan], factor, offset);
+    return;
+}
+
+// Common code for 4-port DAC calibratrion
+// chan = 0..3
+void Calib::_dacCalib(uint8_t ch, float factor, float offset) {
+    char buf[8];
+    if (ch > 3) {
+        return;
+    }
+    _DACfactor[ch] = factor;
+    _DACoffset[ch] = offset;
+    
+    sprintf(buf, "DACf_%d", ch);
+    _pref.putFloat(buf, factor);
+    sprintf(buf, "DACo_%d", ch);
+    _pref.putFloat(buf, offset);
+    return;
+}
+
+void Calib::dacCalibV(uint8_t chan, float factor, float offset) {
+    if (chan > 1) {
+        return;
+    }
+    _dacCalib(_dacvset[chan], factor, offset);
+    return;
+}
+
+void Calib::dacCalibI(uint8_t chan, float factor, float offset) {
+    if (chan > 1) {
+        return;
+    }
+    _dacCalib(_daciset[chan], factor, offset);
+    return;
+}
+
+float Calib::readVsw(uint8_t chan) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _adcvsw[chan];
+    return _adc.read(ch) * _ADCfactor[ch] + _ADCoffset[ch];
+}
+
+float Calib::readVout(uint8_t chan) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _adcvout[chan];
+    return _adc.read(ch) * _ADCfactor[ch] + _ADCoffset[ch];
+}
+
+float Calib::readIout(uint8_t chan) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _adcimon[chan];
+    return _adc.read(ch) * _ADCfactor[ch] + _ADCoffset[ch];
+}
+
+float Calib::readTempC(uint8_t chan) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _adctmon[chan];
+    return _adc.read(ch) * _ADCfactor[ch] + _ADCoffset[ch];
+}
+
+float Calib::readVin() {
+    return analogRead(VINADC) * _espADCfactor + _espADCoffset;
+}
+
+uint16_t Calib::rawVsw(uint8_t chan) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _adcvsw[chan];
+    return _adc.read(ch);
+}
+
+uint16_t Calib::rawVout(uint8_t chan) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _adcvout[chan];
+    return _adc.read(ch);
+}
+
+uint16_t Calib::rawIout(uint8_t chan) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _adcimon[chan];
+    return _adc.read(ch);
+}
+
+uint16_t Calib::rawTempC(uint8_t chan) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _adctmon[chan];
+    return _adc.read(ch);
+}
+
+uint16_t Calib::rawVin() {
+    return analogRead(VINADC);
+}
+
+// Return new value for 12-bit cur incremented by incr
+// Limit the return value to 0..4095 (2^12 - 1)
+uint16_t Calib::_incr12(uint16_t cur, int32_t incr) {
+    uint16_t rval = cur + incr;
+    if (incr > 0 && rval > 4095) {
+        return 4095;
+    } else if (incr < 0 && rval > cur) {
+        // wrapped
+        return 0;
+    }
+    return rval;
+}
+
+float Calib::setVdac(uint8_t chan, int32_t val, bool rel) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _dacvset[chan];
+    _vsetval[chan] = _incr12((rel? _vsetval[chan]: 0), val);
+    _dac.setData(_vsetval[chan], ch);
+    return _vsetval[chan] * _DACfactor[ch] + _DACoffset[ch];
+}
+
+float Calib::setIdac(uint8_t chan, int32_t val, bool rel) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _daciset[chan];
+    _isetval[chan] = _incr12((rel? _isetval[chan]: 0), val);
+    _dac.setData(_isetval[chan], ch);
+    return _isetval[chan] * _DACfactor[ch] + _DACoffset[ch];
+}
+
+float Calib::getVdac(uint8_t chan, uint16_t val) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _dacvset[chan];
+    return _incr12(val, 0) * _DACfactor[ch] + _DACoffset[ch];
+}
+
+float Calib::getIdac(uint8_t chan, uint16_t val) {
+    uint8_t ch;
+    if (chan > 1) {
+        return 0.0;
+    }
+    ch = _daciset[chan];
+    return _incr12(val, 0) * _DACfactor[ch] + _DACoffset[ch];
+}
+
+uint16_t Calib::rawVdac(uint8_t chan) {
+    if (chan > 1) {
+        return 0;
+    }
+    return _vsetval[chan];
+}
+
+uint16_t Calib::rawIdac(uint8_t chan) {
+    if (chan > 1) {
+        return 0;
+    }
+    return _isetval[chan];
+}
