@@ -298,6 +298,7 @@ void setup(void) {
 
     Wire.begin();
     Wire.setClock(400000L);
+    delay(1000);
     calib.begin();
     preset.begin();
 
@@ -376,6 +377,7 @@ void loop(void) {
             case '?':
             Serial.println("commands: ");
             Serial.println("r: print raw adc and dac values");
+            Serial.println("c: print calibration params");
             Serial.println("s: print ssid");
             Serial.println("S <ssid>: set ssid");
             Serial.println("p: print pass");
@@ -390,17 +392,17 @@ void loop(void) {
             break;
             case 'r':
                 for (uint8_t chan = 0; chan < 2; chan++) {
-                    Serial.print(chan); Serial.print(": Vout ");
-                    Serial.print(calib.rawVout(chan)); Serial.print(" Vsw ");
-                    Serial.print(calib.rawVsw(chan)); Serial.print(" Iout ");
-                    Serial.print(calib.rawIout(chan)); Serial.print(" TempC ");
-                    Serial.print(calib.rawTempC(chan)); Serial.print(' ');
+                    Serial.print(" Chan: ");Serial.print(chan);
+                    Serial.print(" Vout: "); Serial.print(calib.rawVout(chan)); 
+                    Serial.print(" Vsw: "); Serial.print(calib.rawVsw(chan));
+                     Serial.print(" Iout: ");Serial.print(calib.rawIout(chan));
+                     Serial.print(" TempC: ");Serial.print(calib.rawTempC(chan));
                 }
-                Serial.println(calib.rawVin());
+                Serial.print(" Vin: ");Serial.println(calib.rawVin());
                 for (uint8_t chan = 0; chan < 2; chan++) {
-                    Serial.print(chan); Serial.print(": Vset ");
-                    Serial.print(calib.rawVdac(chan)); Serial.print(" Iset ");
-                    Serial.print(calib.rawIdac(chan)); Serial.print(' ');
+                    Serial.print(" Chan: "); Serial.print(chan); 
+                    Serial.print(" Vset: ");Serial.print(calib.rawVdac(chan));
+                     Serial.print(" Iset: ");Serial.print(calib.rawIdac(chan));
                 }
                 Serial.println(' ');
                 break;
@@ -488,6 +490,9 @@ void loop(void) {
                     Serial.print("Illegal port: ");
                     Serial.println(port);
                 }
+                break;
+            case 'c':
+                calib.print();
                 break;
             default:
                 if (inbyte == '\n' || inbyte == '\r') {

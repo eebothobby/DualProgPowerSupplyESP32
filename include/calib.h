@@ -27,6 +27,9 @@ class Calib {
     Calib();
     void begin();
 
+    // print calibration data to serial port
+    void print();
+
     // Read the calibrated values from the ADCs
     float readVsw(uint8_t chan); 
     float readVout(uint8_t chan);

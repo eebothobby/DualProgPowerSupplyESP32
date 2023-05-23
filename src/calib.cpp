@@ -14,6 +14,35 @@ void Calib::begin() {
         setVdac(chan, 0, false);
         setIdac(chan, 0, false);
     }
+    print();
+}
+
+void Calib::print() {
+    // Print out the calibration factor and offset
+    Serial.println("ADC Calib");
+    Serial.print("esp: "); Serial.print(_espADCfactor, 7);
+    Serial.print(" "); Serial.println(_espADCoffset, 7);
+
+    for (uint8_t ch = 0; ch < 2; ch++) {
+        Serial.print(" Ch: "); Serial.println(ch);
+        Serial.print(" Vout: "); Serial.print(_ADCfactor[_adcvout[ch]], 7); 
+        Serial.print( " "); Serial.println(_ADCoffset[_adcvout[ch]], 7);
+        Serial.print(" Vsw: "); Serial.print(_ADCfactor[_adcvsw[ch]], 7); 
+        Serial.print( " "); Serial.println(_ADCoffset[_adcvsw[ch]], 7);
+        Serial.print(" Iout: "); Serial.print(_ADCfactor[_adcimon[ch]], 7); 
+        Serial.print( " "); Serial.println(_ADCoffset[_adcimon[ch]], 7);
+        Serial.print(" TempC: "); Serial.print(_ADCfactor[_adctmon[ch]], 7); 
+        Serial.print( " "); Serial.println(_ADCoffset[_adctmon[ch]], 7);
+    }
+
+    Serial.println("DAC Calib");
+    for (uint8_t ch = 0; ch < 2; ch++) {
+        Serial.print(" Ch: "); Serial.println(ch);
+        Serial.print(" Vset: "); Serial.print(_DACfactor[_dacvset[ch]], 7); 
+        Serial.print( " "); Serial.println(_DACoffset[_dacvset[ch]], 7);
+        Serial.print(" Iset: "); Serial.print(_DACfactor[_daciset[ch]], 7); 
+        Serial.print( " "); Serial.println(_DACoffset[_daciset[ch]], 7);
+    }
 }
 
 void Calib::_load() {
@@ -57,6 +86,7 @@ void Calib::_load() {
         char buf[8];
         sprintf(buf, "DACf_%d", i);
         _DACfactor[i] = _pref.getFloat(buf, defFact[i]);
+        sprintf(buf, "DACo_%d", i);
         _DACoffset[i] = _pref.getFloat(buf, defOff[i]);
     }
     return;
