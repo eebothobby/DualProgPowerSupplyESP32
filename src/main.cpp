@@ -448,6 +448,7 @@ bool doSerial() {
             case '?':
                 Serial.println("commands: ");
                 Serial.println("r: print raw adc and dac values");
+                Serial.println("v: print voltages, currents, tempC");
                 Serial.println("c: print calibration params");
                 Serial.println("s: print ssid");
                 Serial.println("S <ssid>: set ssid");
@@ -493,6 +494,16 @@ bool doSerial() {
                     Serial.print(calib.rawIdac(chan));
                 }
                 Serial.println(' ');
+                break;
+            case 'v':
+                for (uint8_t chan = 0; chan < 2; chan++) {
+                    Serial.print("Chan: "); Serial.print(chan);
+                    Serial.print(" Vout: "); Serial.print(vout[chan], 5);
+                    Serial.print(" Iout: "); Serial.print(iout[chan], 5);
+                    Serial.print( " Vsw: "); Serial.print(vsw[chan]);
+                    Serial.print(" tempC: "); Serial.println(tempC[chan]);
+                }
+                Serial.print("Vin: "); Serial.println(vin);
                 break;
             case 's':
                 Serial.print("ssid: ");
