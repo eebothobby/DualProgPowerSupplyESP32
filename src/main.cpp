@@ -52,6 +52,7 @@ TFT_eSPI tft = TFT_eSPI();  // Invoke custom library
 Calib calib;
 Preset preset;
 Wificon wificon;
+TaskHandle_t TaskHandle0;
 
 // flag to indicate that the calibration values have been updated in preferences
 // and need to be saved
@@ -214,10 +215,8 @@ void displayMode1() {
     char buf[22];
     int line = 0;
     for (uint8_t chan = 0; chan < 2; chan++) {
-        pvsetout[chan] =
-            calib.getVdac(chan, preset.pvsetval[chan]);
-        pisetout[chan] =
-            calib.getIdac(chan, preset.pisetval[chan]);
+        pvsetout[chan] = calib.getVdac(chan, preset.pvsetval[chan]);
+        pisetout[chan] = calib.getIdac(chan, preset.pisetval[chan]);
     }
     tft.setTextColor(TFT_WHITE);
     tft.drawString("Preset", 0, line * 20);
@@ -288,6 +287,17 @@ void displayInfo() {
     }
 }
 
+void cpu0Loop(void *pvParameters) {
+    for (;;) {
+        // Serial.print("Task is running on: ");
+        // Serial.println(xPortGetCoreID());
+
+        // Seem to need a delay here otherwise we get a reset.
+        // delay(1);
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+}
+
 void setup(void) {
     uint8_t chan;
     Serial.begin(115200);
@@ -327,7 +337,31 @@ void setup(void) {
     }
 
     displayInfo();
+    xTaskCreatePinnedToCore(cpu0Loop,    // function for task
+                            "CPU0Loop",  // name of task
+                            1000,        // stack size
+                            NULL,        // parameter for task
+                            1,           // priority
+                            &TaskHandle0,
+                            0  // pin to CPU 0
+    );
     ptimeus = micros();
+}
+
+// ramp voltages up to their value
+void rampVset() {
+    float rampvset[2] = {0.0, 0.0};
+    while ((vsetout[0] > rampvset[0]) || (vsetout[1] > rampvset[1])) {
+        if (vsetout[0] > rampvset[0]) {
+            rampvset[0] = calib.setVdac(0, 1, true);
+            // Serial.print("Ramp0 "); Serial.println(rampvset[0]);
+        }
+        if (vsetout[1] > rampvset[1]) {
+            rampvset[1] = calib.setVdac(1, 1, true);
+            // Serial.print("Ramp1 "); Serial.println(rampvset[1]);
+        }
+        delayMicroseconds(10);
+    }
 }
 
 // perform the action selected in the Preset mode
@@ -337,9 +371,13 @@ void presetAction() {
     } else if (pract == 1) {
         Serial.println("pract: Use");
         for (uint8_t chan = 0; chan < 2; chan++) {
-            vsetout[chan] = calib.setVdac(chan, preset.pvsetval[chan], false);
+            // Don't set vdac yet but set vsetout because we will ramp to it
+            vsetout[chan] = calib.getVdac(chan, preset.pvsetval[chan]);
+            calib.setVdac(chan, 0, false);
+
             isetout[chan] = calib.setIdac(chan, preset.pisetval[chan], false);
         }
+        rampVset();
     } else if (pract == 2) {
         Serial.println("pract: Save");
         for (uint8_t chan = 0; chan < 2; chan++) {
@@ -350,59 +388,59 @@ void presetAction() {
     }
 }
 
-void loop(void) {
-    bool disp = false;  // update display if true
+// read commands from serial port if available and handle them
+bool doSerial() {
+    bool disp = false;
     uint8_t chan, port;
-    unsigned long ctimeus = micros();
-    unsigned long deltaus;
     char inbyte = 0;
     String ssid, pass;
     float factor, offset;
 
-    // r: print raw ADC and DAC values
-    // s: print ssid
-    // S <ssid> : set ssid
-    // p: print pass
-    // P <pass> : set pass
-    // w: print wfen
-    // W: toggle wfen
-    // E <fact> <off>: set ESP ADC calibration (<fact>, <off>)
-    // A <chan> <port> <fact> <off> : set ADC channel <chan> <port> calibration <fact> <off>
-    //      where <port> is 0: Vout, 1: Vsw, 2: Iout, 3: TempC
-    // D <chan> <port> <fact> <off> : set DAC channel <chan> <port> calibration <fact> <off>
-    //      where <port> is 0: V, 1: I
     if (Serial.available() > 0) {
         inbyte = Serial.read();
         switch (inbyte) {
             case '?':
-            Serial.println("commands: ");
-            Serial.println("r: print raw adc and dac values");
-            Serial.println("c: print calibration params");
-            Serial.println("s: print ssid");
-            Serial.println("S <ssid>: set ssid");
-            Serial.println("p: print pass");
-            Serial.println("P <pass>: set pass");
-            Serial.println("w: print wfen");
-            Serial.println("W: toggle wfen");
-            Serial.println("E <fact> <off>: set Vin ADC calib");
-            Serial.println("A <chan> <port> <fact> <off>: set ADC calib for <chan> <port>");
-            Serial.println("  <chan> = 0..1, <port> = 0: Vout 1: Vsw 2: Iout 3: TempC");
-            Serial.println("D <chan> <port> <fact> <off>");
-            Serial.println("  <chan> = 0..1 <port> = 0: V, 1: I");
-            break;
+                Serial.println("commands: ");
+                Serial.println("r: print raw adc and dac values");
+                Serial.println("c: print calibration params");
+                Serial.println("s: print ssid");
+                Serial.println("S <ssid>: set ssid");
+                Serial.println("p: print pass");
+                Serial.println("P <pass>: set pass");
+                Serial.println("w: print wfen");
+                Serial.println("W: toggle wfen");
+                Serial.println("E <fact> <off>: set Vin ADC calib");
+                Serial.println(
+                    "A <chan> <port> <fact> <off>: set ADC calib for <chan> "
+                    "<port>");
+                Serial.println(
+                    "  <chan> = 0..1, <port> = 0: Vout 1: Vsw 2: Iout 3: "
+                    "TempC");
+                Serial.println("D <chan> <port> <fact> <off>");
+                Serial.println("  <chan> = 0..1 <port> = 0: V, 1: I");
+                break;
             case 'r':
                 for (uint8_t chan = 0; chan < 2; chan++) {
-                    Serial.print(" Chan: ");Serial.print(chan);
-                    Serial.print(" Vout: "); Serial.print(calib.rawVout(chan)); 
-                    Serial.print(" Vsw: "); Serial.print(calib.rawVsw(chan));
-                     Serial.print(" Iout: ");Serial.print(calib.rawIout(chan));
-                     Serial.print(" TempC: ");Serial.print(calib.rawTempC(chan));
+                    Serial.print(" Chan: ");
+                    Serial.print(chan);
+                    Serial.print(" Vout: ");
+                    Serial.print(calib.rawVout(chan));
+                    Serial.print(" Vsw: ");
+                    Serial.print(calib.rawVsw(chan));
+                    Serial.print(" Iout: ");
+                    Serial.print(calib.rawIout(chan));
+                    Serial.print(" TempC: ");
+                    Serial.print(calib.rawTempC(chan));
                 }
-                Serial.print(" Vin: ");Serial.println(calib.rawVin());
+                Serial.print(" Vin: ");
+                Serial.println(calib.rawVin());
                 for (uint8_t chan = 0; chan < 2; chan++) {
-                    Serial.print(" Chan: "); Serial.print(chan); 
-                    Serial.print(" Vset: ");Serial.print(calib.rawVdac(chan));
-                     Serial.print(" Iset: ");Serial.print(calib.rawIdac(chan));
+                    Serial.print(" Chan: ");
+                    Serial.print(chan);
+                    Serial.print(" Vset: ");
+                    Serial.print(calib.rawVdac(chan));
+                    Serial.print(" Iset: ");
+                    Serial.print(calib.rawIdac(chan));
                 }
                 Serial.println(' ');
                 break;
@@ -416,6 +454,7 @@ void loop(void) {
                 wificon.setSSID(ssid);
                 Serial.print("ssid saved: ");
                 Serial.println(ssid);
+                disp = true;
                 break;
             case 'p':
                 Serial.print("pass: ");
@@ -427,6 +466,7 @@ void loop(void) {
                 wificon.setPass(pass);
                 Serial.print("pass saved: ");
                 Serial.println(pass);
+                disp = true;
                 break;
             case 'w':
                 Serial.print("wfen: ");
@@ -435,11 +475,13 @@ void loop(void) {
             case 'W':
                 wificon.wfen = !wificon.wfen;
                 wificon.setWfen();
+                disp = true;
                 break;
             case 'E':
                 factor = Serial.parseFloat();
                 offset = Serial.parseFloat();
                 calib.adcCalibVin(factor, offset);
+                disp = true;
                 break;
             case 'A':
                 chan = Serial.parseInt();
@@ -453,21 +495,22 @@ void loop(void) {
                 }
                 switch (port) {
                     case 0:
-                    calib.adcCalibVout(chan, factor, offset);
-                    break;
+                        calib.adcCalibVout(chan, factor, offset);
+                        break;
                     case 1:
-                    calib.adcCalibVsw(chan, factor, offset);
-                    break;
+                        calib.adcCalibVsw(chan, factor, offset);
+                        break;
                     case 2:
-                    calib.adcCalibIout(chan, factor, offset);
-                    break;
+                        calib.adcCalibIout(chan, factor, offset);
+                        break;
                     case 3:
-                    calib.adcCalibTempC(chan, factor, offset);
-                    break;
+                        calib.adcCalibTempC(chan, factor, offset);
+                        break;
                     default:
-                    Serial.print("Illegal port: ");
-                    Serial.println(port);
+                        Serial.print("Illegal port: ");
+                        Serial.println(port);
                 }
+                disp = true;
                 break;
             case 'D':
                 chan = Serial.parseInt();
@@ -481,15 +524,16 @@ void loop(void) {
                 }
                 switch (port) {
                     case 0:
-                    calib.dacCalibV(chan, factor, offset);
-                    break;
+                        calib.dacCalibV(chan, factor, offset);
+                        break;
                     case 1:
-                    calib.dacCalibI(chan, factor, offset);
-                    break;
+                        calib.dacCalibI(chan, factor, offset);
+                        break;
                     default:
-                    Serial.print("Illegal port: ");
-                    Serial.println(port);
+                        Serial.print("Illegal port: ");
+                        Serial.println(port);
                 }
+                disp = true;
                 break;
             case 'c':
                 calib.print();
@@ -502,6 +546,16 @@ void loop(void) {
                 }
         }
     }
+    return disp;
+}
+
+void loop(void) {
+    unsigned long deltaus;
+    uint8_t chan;
+    bool disp = false;  // update display if true
+    unsigned long ctimeus = micros();
+
+    disp = doSerial();
 
     if (wificon.wfen) {
         if (!wificon.connect()) {
@@ -513,13 +567,22 @@ void loop(void) {
         }
     }
 
+    // but0 toggles DC-DC converters off/on
     // XXX but0 controls both enables together for now
+    // If turning on, ramp up from 0 to current value
     but0.update();
     if (but0.fell()) {
         enable[0] = 1 - enable[0];  // Toggles enable between 0 and 1
         enable[1] = enable[0];
+        if (enable[0]) {
+            calib.setVdac(0, 0, false);
+            calib.setVdac(1, 0, false);
+        }
         digitalWrite(enpin[0], enable[0] ? HIGH : LOW);
         digitalWrite(enpin[1], enable[1] ? HIGH : LOW);
+        if (enable[0]) {
+            rampVset();
+        }
         disp = true;
     }
 
@@ -558,21 +621,22 @@ void loop(void) {
     if (newPosition != oldPosition) {
         int32_t incr = newPosition - oldPosition;
         // Speed up increment if the user is turning the encoder knob fast.
-        // If the increment is > 1, multiply increment by 16
+        // But not too fast otherwise we need to ramp the voltage
         deltaus = ctimeus - ptimeus;
         if (abs(incr) > 1) {
-            incr *= 16;
+            incr *= 4;
             // Serial.print("incr>1 ");
         }
-        // If the increment happens faster than 40ms, multiply increment by 8
-        // or if faster than 60ms multiple by 4
+        // If the increment happens faster than 40ms, multiply increment by 4
+        // or if faster than 60ms multiple by 2
         if (deltaus < 40000) {
-            incr *= 8;
+            incr *= 4;
             // Serial.print("us<40k ");
         } else if (deltaus < 60000) {
-            incr *= 4;
+            incr *= 2;
             // Serial.print("us<60k ");
         }
+    
         // Serial.println(incr);
         ptimeus = ctimeus;
 
