@@ -315,6 +315,43 @@ float Calib::getIdac(uint8_t chan, uint16_t val) {
     return _incr12(val, 0) * _DACfactor[ch] + _DACoffset[ch];
 }
 
+ uint16_t Calib::getVdacVolts(uint8_t chan, float volts) {
+    float tval;
+    uint8_t ch;
+
+    if (chan > 1) {
+        return 0;
+    }
+    ch = _dacvset[chan];
+
+    tval = (volts - _DACoffset[ch])/ _DACfactor[ch];
+    if (tval < 0.0) {
+        return 0;
+    }
+    if (tval > 4095.0) {
+        return 4095;
+    }
+    return  (uint16_t)(round(tval));
+ }
+
+ uint16_t Calib::getIdacAmps(uint8_t chan, float amps) {
+    float tval;
+    uint8_t ch;
+
+    if (chan > 1) {
+        return 0;
+    }
+    ch = _daciset[chan];
+    tval = (amps - _DACoffset[ch])/ _DACfactor[ch];
+    if (tval < 0.0) {
+        return 0;
+    }
+    if (tval > 4095.0) {
+        return 4095;
+    }
+    return  (uint16_t)(round(tval));
+ }
+
 uint16_t Calib::rawVdac(uint8_t chan) {
     if (chan > 1) {
         return 0;

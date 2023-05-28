@@ -54,6 +54,10 @@ class Calib {
     float getVdac(uint8_t chan, uint16_t val);
     float getIdac(uint8_t chan, uint16_t val);
 
+    // get the closest DAC value for volts or amps
+    uint16_t getVdacVolts(uint8_t chan, float volts);
+    uint16_t getIdacAmps(uint8_t chan, float amps);
+
     // Get the raw values of the DACs
     uint16_t rawVdac(uint8_t chan);
     uint16_t rawIdac(uint8_t chan);

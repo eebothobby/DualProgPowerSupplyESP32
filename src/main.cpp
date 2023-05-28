@@ -388,6 +388,51 @@ void presetAction() {
     }
 }
 
+void turnOff() {
+    enable[0] = 0;
+    enable[1] = 0;
+    digitalWrite(enpin[0], LOW);
+    digitalWrite(enpin[1], LOW);
+}
+
+void turnOn() {
+    enable[0] = 1;
+    enable[1] = 1;
+    calib.setVdac(0, 0, false);
+    calib.setVdac(1, 0, false);
+    digitalWrite(enpin[0], HIGH);
+    digitalWrite(enpin[1], HIGH);
+    rampVset();
+}
+
+void setVolts(float v0, float v1) {
+    uint16_t vdacv0, vdacv1;
+
+    // get the closest vout DAC value 
+    vdacv0 = calib.getVdacVolts(0, v0);
+    vdacv1 = calib.getVdacVolts(1, v1);
+    // get the voltage that DAC value corresponds to
+    vsetout[0] = calib.getVdac(0, vdacv0);
+    vsetout[1] = calib.getVdac(1, vdacv1);
+    
+    // temporarily set the voltages to zer and ramp them up
+    calib.setVdac(0, 0, false);
+    calib.setVdac(1, 0, false);
+    rampVset();
+}
+
+void setCurrents(float a0, float a1) {
+    uint16_t idacv0, idacv1;
+
+    // get the closest idac values
+    idacv0 = calib.getIdacAmps(0, a0);
+    idacv1 = calib.getIdacAmps(1, a1);
+
+    // set the dac values
+    isetout[0] = calib.setIdac(0, idacv0, false);
+    isetout[1] = calib.setIdac(1, idacv1, false);
+}
+
 // read commands from serial port if available and handle them
 bool doSerial() {
     bool disp = false;
@@ -395,6 +440,7 @@ bool doSerial() {
     char inbyte = 0;
     String ssid, pass;
     float factor, offset;
+    float v0, v1;
 
     if (Serial.available() > 0) {
         inbyte = Serial.read();
@@ -409,6 +455,10 @@ bool doSerial() {
                 Serial.println("P <pass>: set pass");
                 Serial.println("w: print wfen");
                 Serial.println("W: toggle wfen");
+                Serial.println("F: turn off");
+                Serial.println("N: turn on");
+                Serial.println("V <v0> <v1>: set voltages ");
+                Serial.println("I <a0> <a1>: set currents");
                 Serial.println("E <fact> <off>: set Vin ADC calib");
                 Serial.println(
                     "A <chan> <port> <fact> <off>: set ADC calib for <chan> "
@@ -476,6 +526,22 @@ bool doSerial() {
                 wificon.wfen = !wificon.wfen;
                 wificon.setWfen();
                 disp = true;
+                break;
+            case 'F':
+                turnOff();
+                break;
+            case 'N':
+                turnOn();
+                break;
+            case 'V':
+                v0 = Serial.parseFloat();
+                v1 = Serial.parseFloat();
+                setVolts(v0, v1);
+                break;
+            case 'I':
+                v0 = Serial.parseFloat();
+                v1 = Serial.parseFloat();
+                setCurrents(v0, v1);
                 break;
             case 'E':
                 factor = Serial.parseFloat();
@@ -575,13 +641,9 @@ void loop(void) {
         enable[0] = 1 - enable[0];  // Toggles enable between 0 and 1
         enable[1] = enable[0];
         if (enable[0]) {
-            calib.setVdac(0, 0, false);
-            calib.setVdac(1, 0, false);
-        }
-        digitalWrite(enpin[0], enable[0] ? HIGH : LOW);
-        digitalWrite(enpin[1], enable[1] ? HIGH : LOW);
-        if (enable[0]) {
-            rampVset();
+            turnOn();
+        } else {
+            turnOff();
         }
         disp = true;
     }
@@ -636,7 +698,7 @@ void loop(void) {
             incr *= 2;
             // Serial.print("us<60k ");
         }
-    
+
         // Serial.println(incr);
         ptimeus = ctimeus;
 
