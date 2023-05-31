@@ -4,7 +4,6 @@
      * Buck-Boost converter modules with LT3081 LDO
      * DAC7574 to generate voltage and current settings
      * ADS7828 to read various voltage levels.
-   Wifi is not used so wifi code is not included.
 
    The controls are:
    Button0: On/Off
@@ -42,6 +41,7 @@
 #include <Bounce2.h>
 #include <Encoder.h>
 #include <TFT_eSPI.h>  // Hardware-specific library
+#include <WebServer.h>
 
 #include "calib.h"
 #include "preset.h"
@@ -53,6 +53,7 @@ Calib calib;
 Preset preset;
 Wificon wificon;
 TaskHandle_t TaskHandle0;
+WebServer wserver(80);
 
 // flag to indicate that the calibration values have been updated in preferences
 // and need to be saved
@@ -408,13 +409,13 @@ void turnOn() {
 void setVolts(float v0, float v1) {
     uint16_t vdacv0, vdacv1;
 
-    // get the closest vout DAC value 
+    // get the closest vout DAC value
     vdacv0 = calib.getVdacVolts(0, v0);
     vdacv1 = calib.getVdacVolts(1, v1);
     // get the voltage that DAC value corresponds to
     vsetout[0] = calib.getVdac(0, vdacv0);
     vsetout[1] = calib.getVdac(1, vdacv1);
-    
+
     // temporarily set the voltages to zer and ramp them up
     calib.setVdac(0, 0, false);
     calib.setVdac(1, 0, false);
@@ -497,13 +498,19 @@ bool doSerial() {
                 break;
             case 'v':
                 for (uint8_t chan = 0; chan < 2; chan++) {
-                    Serial.print("Chan: "); Serial.print(chan);
-                    Serial.print(" Vout: "); Serial.print(vout[chan], 5);
-                    Serial.print(" Iout: "); Serial.print(iout[chan], 5);
-                    Serial.print( " Vsw: "); Serial.print(vsw[chan]);
-                    Serial.print(" tempC: "); Serial.println(tempC[chan]);
+                    Serial.print("Chan: ");
+                    Serial.print(chan);
+                    Serial.print(" Vout: ");
+                    Serial.print(vout[chan], 5);
+                    Serial.print(" Iout: ");
+                    Serial.print(iout[chan], 5);
+                    Serial.print(" Vsw: ");
+                    Serial.print(vsw[chan]);
+                    Serial.print(" tempC: ");
+                    Serial.println(tempC[chan]);
                 }
-                Serial.print("Vin: "); Serial.println(vin);
+                Serial.print("Vin: ");
+                Serial.println(vin);
                 break;
             case 's':
                 Serial.print("ssid: ");
