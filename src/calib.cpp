@@ -33,8 +33,8 @@ Calib::Calib() {}
 void Calib::begin() {
     _pref.begin("calib", false);
     // _pref.clear();
-    _dac.begin(DAC7574_I2CADR);
-    _adc.begin(ADS7828_I2CADR);
+    _dac.begin(DAC7574_I2CADROF);
+    _adc.begin(ADS7828_I2CADROF);
     _load();
     // Set the DAC values to 0
     for (uint8_t chan = 0; chan < 2; chan++) {

@@ -30,14 +30,14 @@
 #include <DAC7574.h>
 #include <Preferences.h>
 
-#define DAC7574_I2CADR 0  // A1, A0 pins
+#define DAC7574_I2CADROF 0  // A1, A0 pins
 // DAC channels
 #define VSETB 0
 #define ISETB 1
 #define ISETA 2
 #define VSETA 3
 
-#define ADS7828_I2CADR 3  // A1, A0 pins
+#define ADS7828_I2CADROF 3  // A1, A0 pins
 // ADC channels
 #define IMONB 0
 #define TMONB 1
