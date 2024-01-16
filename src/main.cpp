@@ -39,7 +39,7 @@
 
 #include <Arduino.h>
 #include <Bounce2.h>
-#include <Encoder.h>
+#include <ESP32Encoder.h>
 #include <TFT_eSPI.h>  // Hardware-specific library
 #include <WebServer.h>
 
@@ -83,7 +83,7 @@ float isetout[2] = {0.0, 0.0};
 // These two buttons are on the T-DISPLAY board on GPIO0, GPIO35
 #define TT_BUT0 0
 #define TT_BUT1 35
-Encoder enc(ENC_CLK, ENC_DT);
+ESP32Encoder enc;
 Bounce enc_but = Bounce();  // Button in the encoder
 Bounce but0 = Bounce();
 Bounce but1 = Bounce();
@@ -316,6 +316,10 @@ void setup(void) {
     tft.init();
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
+    ESP32Encoder::useInternalWeakPullResistors = puType::UP;
+    enc.attachFullQuad(ENC_CLK, ENC_DT);
+    enc.setFilter(1023);
+    enc.setCount(0);
 
     // BOUNCE SETUP
     // SELECT ONE OF THE FOLLOWING :
@@ -697,9 +701,9 @@ void loop(void) {
         disp = true;
     }
 
-    long newPosition = enc.read() / 4;
+    long newPosition = enc.getCount();
     if (newPosition != oldPosition) {
-        int32_t incr = newPosition - oldPosition;
+        int32_t incr = (newPosition - oldPosition)/4;
         // Speed up increment if the user is turning the encoder knob fast.
         // But not too fast otherwise we need to ramp the voltage
         deltaus = ctimeus - ptimeus;
