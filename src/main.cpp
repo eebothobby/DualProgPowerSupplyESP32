@@ -701,9 +701,9 @@ void loop(void) {
         disp = true;
     }
 
-    long newPosition = enc.getCount();
+    long newPosition = enc.getCount()/4;
     if (newPosition != oldPosition) {
-        int32_t incr = (newPosition - oldPosition)/4;
+        int32_t incr = (newPosition - oldPosition);
         // Speed up increment if the user is turning the encoder knob fast.
         // But not too fast otherwise we need to ramp the voltage
         deltaus = ctimeus - ptimeus;
